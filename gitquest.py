@@ -2,7 +2,11 @@ import sys
 import tty
 import termios
 import time
-from gitquest_engine import GameEngine, EMPTY, WALL, PLAYER, BUG, MERGE_CONFLICT, COMPILER_ERROR, LINT_WARNING, MERGED_PORTAL, PARENT_PORTAL, LORE_TERMINAL, LOOT_CHEST
+from gitquest_engine import (
+    GameEngine, EMPTY, WALL, PLAYER, BUG, MERGE_CONFLICT,
+    HEAD_PILLAR, INCOMING_PILLAR, COMPILER_ERROR, LINT_WARNING,
+    MERGED_PORTAL, PARENT_PORTAL, LORE_TERMINAL, LOOT_CHEST
+)
 
 # ANSI styling helper functions
 def clear_screen():
@@ -19,6 +23,8 @@ COLOR_MAP = {
     PLAYER: "\033[92m@",        # Green player
     BUG: "\033[91mB",           # Red bug
     MERGE_CONFLICT: "\033[31;1mM", # Bright/bold red conflict
+    HEAD_PILLAR: "\033[96mH",     # Cyan HEAD pillar
+    INCOMING_PILLAR: "\033[93mI", # Yellow Incoming pillar
     COMPILER_ERROR: "\033[95mC", # Magenta compiler error
     LINT_WARNING: "\033[93mL",   # Yellow linter warning
     MERGED_PORTAL: "\033[96m>",  # Cyan portal forward
@@ -28,16 +34,13 @@ COLOR_MAP = {
 }
 
 def get_char_at(room, x, y, player):
-    # Check if player is here
     if player.x == x and player.y == y:
         return draw_text("@", "\033[92;1m")
 
-    # Check enemies
     for enemy in room.enemies:
         if enemy.x == x and enemy.y == y:
             return draw_text(enemy.symbol, enemy.color)
 
-    # Check general map grid cell
     cell = room.grid[y][x]
     if cell in COLOR_MAP:
         return COLOR_MAP[cell]
@@ -56,59 +59,137 @@ class TerminalGame:
         if len(self.log_messages) > 6:
             self.log_messages.pop(0)
 
+    def draw_git_graph(self):
+        """Generates real-time ASCII Git Graph of surrounding commits."""
+        current_hash = self.engine.current_hash
+        graph_lines = []
+
+        # Display up to 5 commits centering around active commit
+        active_idx = -1
+        for i, c in enumerate(self.engine.commits):
+            if c["hash"] == current_hash:
+                active_idx = i
+                break
+
+        start = max(0, active_idx - 2)
+        end = min(len(self.engine.commits), active_idx + 3)
+
+        for idx in range(start, end):
+            c = self.engine.commits[idx]
+            marker = "*"
+            if c["hash"] == current_hash:
+                marker = draw_text("@", "\033[92;1m")
+                desc = f"{marker} [{c['short_hash']}] (HEAD - You are here) - {c['subject'][:22]}"
+            else:
+                desc = f"* [{c['short_hash']}] - {c['subject'][:25]}"
+
+            # Print connections
+            if idx > start:
+                graph_lines.append("  |")
+            graph_lines.append(f"  {desc}")
+
+        return graph_lines
+
     def draw(self):
         room = self.engine.get_current_room()
         player = self.engine.player
 
-        # Build screen buffer
-        buffer = []
-        buffer.append("\033[1;36m=== GitQuest: Terminal Roguelike ==\033[0m")
-        buffer.append(f"Commit: \033[93m{room.commit['short_hash']}\033[0m | Author: {room.commit['author']} | Type: \033[95m{room.commit['type'].upper()}\033[0m")
-        buffer.append(f"Subject: {room.commit['subject'][:50]}")
-        buffer.append("-" * 40)
+        # Build layout lines
+        header_lines = [
+            "\033[1;36m=== GitQuest: Interactive Git history DAG Roguelike ===\033[0m",
+            f"Commit: \033[93m{room.commit['short_hash']}\033[0m | Branches: \033[92m{', '.join(room.commit.get('branches', [])) or 'detached'}\033[0m | Type: \033[95m{room.commit.get('type', 'chore').upper()}\033[0m",
+            f"Subject: {room.commit.get('subject', '')[:65]}",
+            "-" * 80
+        ]
 
-        # Render map grid
+        # Side-by-side columns: Map on the left, Git Status dashboard on the right!
+        grid_lines = []
         for y in range(room.height):
-            line = []
+            line_chars = []
             for x in range(room.width):
-                line.append(get_char_at(room, x, y, player))
-            buffer.append("".join(line))
+                line_chars.append(get_char_at(room, x, y, player))
+            grid_lines.append("".join(line_chars))
 
-        buffer.append("-" * 40)
-        # Stats display
-        buffer.append(f"\033[92mHP: {player.hp}/{player.max_hp}\033[0m | \033[93mStars (Gold): {player.gold}\033[0m | Level: {player.level} ({player.xp}/{player.xp_to_next} XP)")
-        buffer.append(f"Weapon: \033[96m{player.weapon['name']} (+{player.weapon['bonus']})\033[0m | Armor: \033[96m{player.armor['name']} (+{player.armor['bonus']})\033[0m")
+        # Build dashboard lines
+        dash_lines = [
+            f"\033[1;35mOn branch {player.role}\033[0m",
+            f"HP: \033[92m{player.hp}/{player.max_hp}\033[0m | Level: {player.level} ({player.xp}/{player.xp_to_next} XP)",
+            f"Stars: \033[93m{player.gold} ★\033[0m",
+            f"Weapon: \033[96m{player.weapon['name']} (+{player.weapon['bonus']})\033[0m",
+            f"Armor: \033[96m{player.armor['name']} (+{player.armor['bonus']})\033[0m",
+            f"Stash data: {'[SAVED STATS]' if player.stash_data else '[EMPTY]'}",
+            f"Inventory: {', '.join(player.inventory) if player.inventory else 'None'}",
+            "",
+            "\033[1;34m--- Git DAG Graph ---\033[0m",
+        ] + self.draw_git_graph()
 
-        buffer.append("\033[1;35m--- Skill Cooldowns ---\033[0m")
+        # Padding dashboard lines to match height
+        while len(dash_lines) < room.height:
+            dash_lines.append("")
+
+        # Combine columns side-by-side
+        combined_body = []
+        for y in range(room.height):
+            # Left side (map) + separator + Right side (dashboard)
+            combined_body.append(f"{grid_lines[y]}   |   {dash_lines[y]}")
+
+        footer_lines = [
+            "-" * 80,
+            "\033[1;35m--- Active Skills Cooldowns ---\033[0m"
+        ]
+
         skills_str = []
         for name, data in player.skills.items():
             cd = data["cooldown"]
             cd_str = f"{name}: \033[91m{cd}t\033[0m" if cd > 0 else f"{name}: \033[92mREADY\033[0m"
             skills_str.append(cd_str)
-        buffer.append(" | ".join(skills_str))
+        footer_lines.append(" | ".join(skills_str))
 
-        buffer.append("\033[1;33m--- LOGS ---\033[0m")
+        footer_lines.append("\033[1;33m--- Git Logs & Output ---\033[0m")
         for log in self.log_messages:
-            buffer.append(f"  {log}")
-        while len(buffer) < 24: # Padding
-            buffer.append("")
+            footer_lines.append(f"  {log}")
 
-        buffer.append("\033[1mControls: WASD to Move/Attack | 1-3 Git Skills | Q to Quit\033[0m")
+        while len(footer_lines) < 14: # Padding logs to keep screen stable
+            footer_lines.append("")
 
-        # Print output all at once
+        footer_lines.append("\033[1;37mControls:\033[0m")
+        footer_lines.append("  \033[92mw/a/s/d\033[0m: Move / Attack | \033[93m1,2,3\033[0m: Active Git Skills")
+        footer_lines.append("  \033[96mS\033[0m (Shift+s): git stash current state | \033[96mC\033[0m (Shift+c): git commit --amend (Reroll chest)")
+        footer_lines.append("  \033[96mB\033[0m (Shift+b): git checkout branch (Swap player class) | \033[95mQ\033[0m (or q): Quit")
+
+        # Render the full screen
         clear_screen()
-        sys.stdout.write("\n".join(buffer) + "\n")
+        sys.stdout.write("\n".join(header_lines + combined_body + footer_lines) + "\n")
         sys.stdout.flush()
 
     def play_turn(self, action):
         player = self.engine.player
 
-        # Verify valid key inputs
-        if action not in ["w", "a", "s", "d", "1", "2", "3"]:
-            # If the user presses an invalid key, do not advance turn
+        # Verify valid inputs
+        valid_actions = ["w", "a", "s", "d", "1", "2", "3", "S", "C", "B"]
+        if action not in valid_actions:
             return
 
-        # Decrement cooldowns on movement/skills
+        # Special Action: git stash
+        if action == "S":
+            res = self.engine.stash_save()
+            self.add_log(res)
+            return
+
+        # Special Action: git commit --amend
+        if action == "C":
+            res = self.engine.amend_chest_loot()
+            self.add_log(res)
+            return
+
+        # Special Action: git checkout
+        if action == "B":
+            target = "Frontend Dev" if player.role == "Backend Dev" else "Backend Dev"
+            success, msg = player.checkout_role(target)
+            self.add_log(msg)
+            return
+
+        # Decrement skills cooldown
         for s_name in player.skills:
             if player.skills[s_name]["cooldown"] > 0:
                 player.skills[s_name]["cooldown"] -= 1
@@ -123,31 +204,27 @@ class TerminalGame:
         elif action == "d":
             dx = 1
         elif action in ["1", "2", "3"]:
-            # Special Skills
+            # Skills logic
             skill_idx = int(action) - 1
             skill_name = list(player.skills.keys())[skill_idx]
             skill = player.skills[skill_name]
 
             if skill["cooldown"] > 0:
-                self.add_log(f"Skill {skill_name} is on cooldown for {skill['cooldown']} more turns!")
+                self.add_log(f"Skill {skill_name} is on cooldown for {skill['cooldown']} turns!")
                 return
 
-            # Trigger skill effect
             if skill_name == "Git Reset":
-                player.heal(25)
-                self.add_log("Git Reset executed! Healed 25 HP.")
+                player.heal(30)
+                self.add_log("Git Reset executed! Healed 30 HP.")
                 skill["cooldown"] = skill["max_cooldown"]
             elif skill_name == "Force Push":
-                # Find adjacent enemy and force push
                 room = self.engine.get_current_room()
                 pushed = False
                 for enemy in room.enemies:
                     if abs(enemy.x - player.x) <= 1 and abs(enemy.y - player.y) <= 1:
-                        # Determine direction to push
                         pdx = enemy.x - player.x
                         pdy = enemy.y - player.y
                         nx, ny = enemy.x + pdx, enemy.y + pdy
-                        # Push back if grid cell empty
                         if nx >= 0 and nx < room.width and ny >= 0 and ny < room.height and room.grid[ny][nx] == EMPTY:
                             enemy.x, enemy.y = nx, ny
                         enemy.hp -= 20
@@ -164,12 +241,13 @@ class TerminalGame:
                 skill["cooldown"] = skill["max_cooldown"]
 
             elif skill_name == "Cherry Pick":
-                # Instant damage to random enemy in the room
                 room = self.engine.get_current_room()
                 if room.enemies:
                     target = room.enemies[0]
                     target.hp -= 30
-                    self.add_log(f"Cherry Picked enemy {target.name} for 30 HP!")
+                    player.max_hp += 2 # Absorb Max HP
+                    player.heal(2)
+                    self.add_log(f"Cherry Picked {target.name} for 30 HP and absorbed +2 Max HP!")
                     if target.hp <= 0:
                         room.enemies.remove(target)
                         player.gain_xp(15)
@@ -186,23 +264,22 @@ class TerminalGame:
                 self.add_log(result.split("COMBAT:")[1])
             elif result.startswith("LOOT_WEAPON:"):
                 p = result.split(":")
-                self.add_log(f"Looted a {p[1]} ({p[2]})!")
+                self.add_log(f"Looted a {p[1]} ({p[2]})! Type 'C' to git commit --amend.")
             elif result.startswith("LOOT_ARMOR:"):
                 p = result.split(":")
-                self.add_log(f"Looted a {p[1]} ({p[2]})!")
+                self.add_log(f"Looted a {p[1]} ({p[2]})! Type 'C' to git commit --amend.")
             elif result.startswith("LOOT_GOLD:"):
                 self.add_log(f"Earned {result.split(':')[1]} GitHub Stars!")
             elif result.startswith("TERMINAL:"):
                 self.add_log(f"Terminal: {result.split('TERMINAL:')[1]}")
             elif result == "PORTAL_FORWARD":
-                self.add_log("Traveled forward in git history!")
+                self.add_log("Traveled forward in git history DAG branch!")
             elif result == "PORTAL_BACK":
-                self.add_log("Traveled back in git history!")
+                self.add_log("Traveled back in git history parent commit!")
             elif result == "VICTORY_CANDIDATE":
-                # Check if there are any remaining enemies in the final level to claim pure victory
                 room = self.engine.get_current_room()
                 if room.enemies:
-                    self.add_log("Merge Conflicts or bugs block you from merging HEAD. Defeat them first!")
+                    self.add_log("Resolve all Merge Conflicts or bugs in current HEAD commit room first!")
                 else:
                     self.won = True
                     self.game_over = True
@@ -229,7 +306,7 @@ def get_char_input():
 def run_game():
     game = TerminalGame()
 
-    # Simple intro screen
+    # Intro screen
     clear_screen()
     print("\033[1;36m" + r"""
   ____ _ _    ___                  _
@@ -239,17 +316,16 @@ def run_game():
  \____|_|\__|\__\_\\__,_|\___||___/\__|
 
 """ + "\033[0m")
-    print("\033[1;32mWelcome, Developer, to GitQuest!\033[0m")
+    print("\033[1;32mWelcome, Developer, to GitQuest: True DAG Traversal!\033[0m")
     print("A git history-based dungeon crawler roguelike RPG built directly in your terminal.")
-    print("Travel through your local git commits as distinct dungeon rooms.")
-    print("Enemies and loot are procedural, generated dynamically from the messages and authors.")
+    print("Explore multi-branch paths, checkout branch classes, stash on death, and resolve Merge Boss conflicts!")
     print("\nPress any key to load your git logs and enter the git space...")
     get_char_input()
 
     while not game.game_over:
         game.draw()
-        ch = get_char_input().lower()
-        if ch == "q":
+        ch = get_char_input()
+        if ch.lower() == "q":
             break
         game.play_turn(ch)
 
