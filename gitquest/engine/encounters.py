@@ -1,6 +1,6 @@
 import random
 import math
-from gitquest_parser import parse_git_history
+from gitquest.engine.repository import RepositoryScanner
 
 # Constants for dungeon elements
 EMPTY = " "
@@ -221,8 +221,9 @@ class DungeonRoom:
         return self.spawn_x, self.spawn_y
 
 class GameEngine:
-    def __init__(self):
-        self.commits = parse_git_history()
+    def __init__(self, commits=None):
+        scanner = RepositoryScanner()
+        self.commits = commits if commits is not None else scanner.scan_repository()
         # Fallback if empty
         if not self.commits:
             self.commits = [{
@@ -308,7 +309,6 @@ class GameEngine:
         if not self.player.last_chest_loot:
             return "No chest opened recently to amend!"
 
-        # Remove the amend item
         self.player.inventory.remove("git commit --amend")
 
         prev = self.player.last_chest_loot
@@ -319,9 +319,8 @@ class GameEngine:
             self.player.armor = {"name": "Pyjamas", "bonus": 0}
         self.player.gold = max(0, self.player.gold - prev["gold"])
 
-        # Keep same type of loot slot for the amend reroall
         new_type = prev["type"]
-        new_val = random.randint(prev["value"] + 1, prev["value"] + 5) # Guaranteed better!
+        new_val = random.randint(prev["value"] + 1, prev["value"] + 5)
         new_gold = random.randint(15, 45)
 
         self.player.gold += new_gold
@@ -387,7 +386,6 @@ class GameEngine:
                 old_hash = self.current_hash
                 self.current_hash = parent_hash
                 next_room = self.get_current_room()
-                # Spawn player near corresponding merged portal
                 found = False
                 for (px, py), target in next_room.portals.items():
                     if target == old_hash:
@@ -409,7 +407,6 @@ class GameEngine:
                 old_hash = self.current_hash
                 self.current_hash = child_hash
                 next_room = self.get_current_room()
-                # Spawn player near parent portal
                 found = False
                 for (px, py), target in next_room.portals.items():
                     if target == old_hash:
@@ -445,7 +442,6 @@ class GameEngine:
 
             # Special interaction: Destroying HEAD/Incoming pillars resolves both and breaks the shield
             if enemy.name in ["HEAD Pillar", "Incoming Pillar"]:
-                # Remove both pillars
                 room.enemies = [e for e in room.enemies if e.name not in ["HEAD Pillar", "Incoming Pillar"]]
                 log += " Pillar destroyed! Merge Conflict resolved. The Boss's shield is shattered!"
 
@@ -512,14 +508,3 @@ class GameEngine:
                     if room.grid[ny][nx] == EMPTY and not any(e.x == nx and e.y == ny for e in room.enemies) and (nx, ny) != (self.player.x, self.player.y):
                         enemy.x, enemy.y = nx, ny
         return logs
-
-if __name__ == "__main__":
-    print("Testing Game Engine...")
-    engine = GameEngine()
-    print(f"Loaded {len(engine.rooms)} rooms.")
-    room = engine.get_current_room()
-    print(f"Current room: {room.commit['short_hash']} | Type: {room.commit['type']}")
-    print(f"Player spawn point: ({engine.player.x}, {engine.player.y})")
-    print("Enemies in start room:")
-    for e in room.enemies:
-        print(f"- {e.name} at ({e.x}, {e.y})")

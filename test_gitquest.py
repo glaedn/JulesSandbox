@@ -1,12 +1,13 @@
 import unittest
-from gitquest_parser import parse_git_history
-from gitquest_engine import GameEngine, DungeonRoom, Enemy, Player
-from gitquest_app import TerminalGame
+from gitquest.engine.repository import RepositoryScanner
+from gitquest.engine.encounters import GameEngine, DungeonRoom, Enemy, Player
+from gitquest.interfaces.terminal import TerminalInterface
 
 class TestGitQuest(unittest.TestCase):
 
     def test_git_parser(self):
-        commits = parse_git_history()
+        scanner = RepositoryScanner()
+        commits = scanner.scan_repository()
         self.assertIsInstance(commits, list)
         if commits:
             commit = commits[0]
@@ -142,7 +143,7 @@ class TestGitQuest(unittest.TestCase):
 
     def test_terminal_game_turn_flow(self):
         """Verify gameplay actions (movement vs stash/checkout) in terminal game loop."""
-        game = TerminalGame()
+        game = TerminalInterface()
         # Test movement
         game.engine.player.x = 4
         game.engine.player.y = 4

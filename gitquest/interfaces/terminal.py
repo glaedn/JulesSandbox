@@ -2,13 +2,13 @@ import sys
 import tty
 import termios
 import time
-from gitquest_engine import (
+from gitquest.engine.encounters import (
     GameEngine, EMPTY, WALL, PLAYER, BUG, MERGE_CONFLICT,
     HEAD_PILLAR, INCOMING_PILLAR, COMPILER_ERROR, LINT_WARNING,
     MERGED_PORTAL, PARENT_PORTAL, LORE_TERMINAL, LOOT_CHEST
 )
-from gitquest.domain.events import EventBus, DamageApplied, EnemyDefeated, QuestCompleted
-from gitquest.domain.state import GameState
+from gitquest.engine.events import EventBus, DamageApplied, EnemyDefeated, QuestCompleted
+from gitquest.engine.state import GameState
 from gitquest.adapters.git_cli import GitCLIAdapter
 from gitquest.adapters.diagnostics import DiagnosticsAdapter
 from gitquest.adapters.test_runner import TestRunnerAdapter
@@ -51,7 +51,7 @@ def get_char_at(room, x, y, player):
         return COLOR_MAP[cell]
     return cell
 
-class TerminalGame:
+class TerminalInterface:
     def __init__(self, campaign_choice="1"):
         # Initialize Adapters & State
         self.git_cli = GitCLIAdapter()
@@ -306,7 +306,6 @@ class TerminalGame:
                         if nx >= 0 and nx < room.width and ny >= 0 and ny < room.height and room.grid[ny][nx] == EMPTY:
                             enemy.x, enemy.y = nx, ny
 
-                        # Apply unified engine damage check
                         dmg_res = self.engine.damage_enemy(enemy, 20)
                         self.add_log(f"Force Push executed! {dmg_res}")
                         self.event_bus.publish(DamageApplied("Player (Force Push)", enemy.name, 20, enemy.hp))
@@ -325,7 +324,6 @@ class TerminalGame:
                     player.max_hp += 2
                     player.heal(2)
 
-                    # Apply unified engine damage check
                     dmg_res = self.engine.damage_enemy(target, 30)
                     self.add_log(f"Cherry Picked {target.name}! {dmg_res}")
                     self.event_bus.publish(DamageApplied("Player (Cherry Pick)", target.name, 30, target.hp))
@@ -358,7 +356,6 @@ class TerminalGame:
                     self.won = True
                     self.game_over = True
 
-        # Check real-world validations!
         self.check_active_quest_validation()
 
         # Update enemies
@@ -368,7 +365,6 @@ class TerminalGame:
                 self.add_log(elog)
 
         if player.hp <= 0:
-            # Check stash pop restore
             if self.state.stash_snapshot:
                 self.state.restore_from(self.state.stash_snapshot)
                 player.hp = self.state.hp
@@ -396,7 +392,7 @@ def get_char_input():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return ch
 
-def run_game():
+def run_terminal_game():
     clear_screen()
     print("\033[1;36m" + r"""
   ____ _ _    ___                  _
@@ -422,7 +418,7 @@ def run_game():
     if choice not in ["1", "2", "3"]:
         choice = "1"
 
-    game = TerminalGame(campaign_choice=choice)
+    game = TerminalInterface(campaign_choice=choice)
 
     clear_screen()
     print("\033[1;32mEntering the cockpit timeline...\033[0m")
@@ -457,14 +453,6 @@ __     _____ ____ _____ ___  ______     __
 """ + "\033[0m")
         print("\033[1;31mPipeline aborted due to severe uncommitted changes/unhandled exceptions!\033[0m\n")
 
-    # Generate and print the beautiful Narrative Engineering Chronicle!
     print(game.chronicle.generate_narrative_summary())
     print("\nPress any key to exit GitQuest.")
     get_char_input()
-
-if __name__ == "__main__":
-    try:
-        run_game()
-    except KeyboardInterrupt:
-        clear_screen()
-        print("Session disconnected.")
