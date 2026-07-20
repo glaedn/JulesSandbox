@@ -1,7 +1,7 @@
 import unittest
 from gitquest_parser import parse_git_history
 from gitquest_engine import GameEngine, DungeonRoom, Enemy, Player
-from gitquest import TerminalGame
+from gitquest_app import TerminalGame
 
 class TestGitQuest(unittest.TestCase):
 
@@ -158,12 +158,12 @@ class TestGitQuest(unittest.TestCase):
         # 's' should move player DOWN (increase y)
         game.play_turn("s")
         self.assertEqual(game.engine.player.y, 5)
-        self.assertIsNone(game.engine.player.stash_data) # S was not stashed
+        self.assertIsNone(game.state.stash_snapshot) # S was not stashed
 
         # 'S' (Shift+s) should stash player state, NOT move
         game.play_turn("S")
         self.assertEqual(game.engine.player.y, 5) # y remains same
-        self.assertIsNotNone(game.engine.player.stash_data) # stash data is saved!
+        self.assertIsNotNone(game.state.stash_snapshot) # stash snapshot is saved!
 
         # 'B' (Shift+b) should checkout role/class
         self.assertEqual(game.engine.player.role, "Backend Dev")

@@ -424,46 +424,57 @@ class GameEngine:
 
         return "SUCCESS"
 
-    def attack_enemy(self, enemy):
+    def damage_enemy(self, enemy, dmg, source="Player"):
+        """Unified method to apply damage to an enemy.
+        Ensures consistent shield checks, defeat actions, and pillar destructions.
+        """
         room = self.get_current_room()
 
-        # Shield mechanism for Merge Conflict Boss
+        # Shield checks
         if enemy.name == "Merge Conflict Boss":
             has_pillars = any(e.name in ["HEAD Pillar", "Incoming Pillar"] for e in room.enemies)
             if has_pillars:
-                return "COMBAT:Your attack bounce off! The Merge Conflict Boss is shielded by HEAD and Incoming branch pillars! Destroy a pillar to resolve."
+                return "Your attack bounce off! The Merge Conflict Boss is shielded by HEAD and Incoming branch pillars! Destroy a pillar to resolve."
 
-        # Calculate standard damage
-        dmg = max(1, (self.player.attack + self.player.weapon["bonus"]) - enemy.defense)
         enemy.hp -= dmg
-        log = f"You attack {enemy.name} for {dmg} dmg. ({enemy.hp}/{enemy.max_hp} HP)"
+        log = f"Dealt {dmg} damage to {enemy.name}. ({enemy.hp}/{enemy.max_hp} HP)"
 
         if enemy.hp <= 0:
-            room.enemies.remove(enemy)
+            if enemy in room.enemies:
+                room.enemies.remove(enemy)
 
-            # Special interaction: Destroying a Merge Boss Pillar resolves both of them and breaks the shield
+            # Special interaction: Destroying HEAD/Incoming pillars resolves both and breaks the shield
             if enemy.name in ["HEAD Pillar", "Incoming Pillar"]:
                 # Remove both pillars
                 room.enemies = [e for e in room.enemies if e.name not in ["HEAD Pillar", "Incoming Pillar"]]
                 log += " Pillar destroyed! Merge Conflict resolved. The Boss's shield is shattered!"
 
+            # Award XP to Player
             xp_gained = 15 + enemy.max_hp // 2
             leveled = self.player.gain_xp(xp_gained)
             log += f" Killed! +{xp_gained} XP."
             if leveled:
                 log += " LEVEL UP!"
-        else:
-            # Counter attack
-            if enemy.attack > 0:
-                edmg = max(1, enemy.attack - (self.player.defense + self.player.armor["bonus"]))
-                self.player.hp -= edmg
-                log += f" {enemy.name} counters for {edmg} dmg."
-                if self.player.hp <= 0:
-                    # Check stash restore
-                    if self.stash_pop():
-                        log += " CRITICAL FAULT! Your session was restored using git stash pop!"
-                    else:
-                        log += " YOU DIED."
+
+        return log
+
+    def attack_enemy(self, enemy):
+        # Calculate standard damage
+        dmg = max(1, (self.player.attack + self.player.weapon["bonus"]) - enemy.defense)
+        res = self.damage_enemy(enemy, dmg)
+
+        log = f"You attack {enemy.name}. {res}"
+
+        # Counter attack if alive
+        if enemy.hp > 0 and enemy.attack > 0:
+            edmg = max(1, enemy.attack - (self.player.defense + self.player.armor["bonus"]))
+            self.player.hp -= edmg
+            log += f" {enemy.name} counters for {edmg} dmg."
+            if self.player.hp <= 0:
+                if self.stash_pop():
+                    log += " CRITICAL FAULT! Your session was restored using git stash pop!"
+                else:
+                    log += " YOU DIED."
 
         return f"COMBAT:{log}"
 
