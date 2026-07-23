@@ -148,7 +148,12 @@ class DungeonRoom:
 
         # Add random columns/walls based on file names inside commit
         num_files = len(self.commit.get("modified_files", []))
-        random.seed(int(self.commit["hash"][:8], 16))
+        try:
+            random.seed(int(self.commit["hash"][:8], 16))
+        except ValueError:
+            import hashlib
+            h = hashlib.sha256(self.commit["hash"].encode()).hexdigest()
+            random.seed(int(h[:8], 16))
 
         for _ in range(min(5, num_files)):
             ox = random.randint(3, self.width - 4)

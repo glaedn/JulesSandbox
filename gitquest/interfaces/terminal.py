@@ -12,9 +12,14 @@ from gitquest.engine.state import GameState
 from gitquest.adapters.git_cli import GitCLIAdapter
 from gitquest.adapters.diagnostics import DiagnosticsAdapter
 from gitquest.adapters.test_runner import TestRunnerAdapter
-from gitquest.analysis.quest_compiler import QuestCompiler
+from gitquest.analysis.quest_compiler import QuestCompiler, Quest
 from gitquest.ui.graph import DAGVisualizer
 from gitquest.reports.chronicle import ChronicleReporter
+
+# Import sandbox/scenario structures
+from gitquest.scenarios.definitions import load_scenario, SCENARIOS
+from gitquest.scenarios.tutorials import load_tutorial, TUTORIALS
+from gitquest.ui.builder import run_interactive_builder
 
 def clear_screen():
     sys.stdout.write("\033[2J\033[H")
@@ -52,7 +57,7 @@ def get_char_at(room, x, y, player):
     return cell
 
 class TerminalInterface:
-    def __init__(self, campaign_choice="1"):
+    def __init__(self, campaign_choice="1", custom_commits=None):
         # Initialize Adapters & State
         self.git_cli = GitCLIAdapter()
         self.diagnostics = DiagnosticsAdapter()
@@ -69,14 +74,18 @@ class TerminalInterface:
         self.event_bus.subscribe(EnemyDefeated, self._on_enemy_defeated)
         self.event_bus.subscribe(QuestCompleted, self._on_quest_completed)
 
-        # Load engine
-        self.engine = GameEngine()
+        # Load engine with either custom scanned commits or real-repo logs
+        self.engine = GameEngine(commits=custom_commits)
         self.state.current_hash = self.engine.current_hash
         self.state.player_x = self.engine.player.x
         self.state.player_y = self.engine.player.y
 
         # Compile active quests
-        self.quests = self.quest_compiler.compile_quests(self.git_cli, self.diagnostics, self.test_runner)
+        if custom_commits is not None:
+            self.quests = self._compile_sandbox_quests(campaign_choice)
+        else:
+            self.quests = self.quest_compiler.compile_quests(self.git_cli, self.diagnostics, self.test_runner)
+
         self.active_quest = self.quests[0] if self.quests else None
 
         # Visualization
@@ -91,10 +100,104 @@ class TerminalInterface:
         campaign_names = {
             "1": "Archive Expedition (Explore Ruins)",
             "2": "Active Campaign (Codebase Quests)",
-            "3": "Release Raid (Deployment Prep)"
+            "3": "Release Raid (Deployment Prep)",
+            "4": "Scenario Arena (Simulated Mission)",
+            "5": "Git School (Interactive Tutorials)",
+            "6": "Scenario Builder (Custom DAG Dungeon)"
         }
         self.add_log(f"Started campaign: {campaign_names.get(campaign_choice, 'Default')}")
         self.chronicle.add_event(f"Initialized GitQuest campaign: {campaign_names.get(campaign_choice, 'Default')}")
+
+    def _compile_sandbox_quests(self, campaign_choice):
+        quests = []
+        if campaign_choice == "5": # Git School Tutorials
+            subject = self.engine.commits[0]["subject"] if self.engine.commits else ""
+            subject_lower = subject.lower()
+            if "stash" in subject_lower:
+                quests.append(Quest(
+                    qid="tutorial_stash",
+                    source="Git School",
+                    title="The Art of the Stash",
+                    description="Learn to stash away changes before a fatal battle.",
+                    target_paths=[],
+                    objective="Press 'S' to save your stash. Engage the bug and restore!",
+                    completion_evidence="State restored from stash snapshot.",
+                    reward_xp=50,
+                    reward_gold=20
+                ))
+            elif "amend" in subject_lower:
+                quests.append(Quest(
+                    qid="tutorial_amend",
+                    source="Git School",
+                    title="Refine Your Commit History",
+                    description="Open a mediocre chest and use '--amend' to reroll it.",
+                    target_paths=[],
+                    objective="Open chest, then press 'C' to reroll into premium loot!",
+                    completion_evidence="Chest loot successfully amended.",
+                    reward_xp=50,
+                    reward_gold=20
+                ))
+            elif "checkout" in subject_lower:
+                quests.append(Quest(
+                    qid="tutorial_checkout",
+                    source="Git School",
+                    title="Master the Multi-branch Dev",
+                    description="Checkout and swap branches (classes) to defeat bugs.",
+                    target_paths=[],
+                    objective="Press 'B' to checkout different branch roles and defeat bugs!",
+                    completion_evidence="Role checked out.",
+                    reward_xp=50,
+                    reward_gold=20
+                ))
+            elif "merge" in subject_lower:
+                quests.append(Quest(
+                    qid="tutorial_merge",
+                    source="Git School",
+                    title="Resolve the Conflict War",
+                    description="A Merge Conflict Boss is shielded. Resolve the conflict pillars first.",
+                    target_paths=[],
+                    objective="Attack and destroy HEAD/Incoming pillars, then defeat the Boss!",
+                    completion_evidence="Pillars resolved.",
+                    reward_xp=50,
+                    reward_gold=20
+                ))
+            else:
+                quests.append(Quest(
+                    qid="tutorial_general",
+                    source="Git School",
+                    title="Git School Orientation",
+                    description="Master general git navigation.",
+                    target_paths=[],
+                    objective="Navigate forward to the HEAD portal to graduate!",
+                    completion_evidence="Reached HEAD.",
+                    reward_xp=30,
+                    reward_gold=15
+                ))
+        elif campaign_choice == "4": # Scenario Arena
+            quests.append(Quest(
+                qid="scenario_mission",
+                source="Scenario Arena",
+                title="Monolith / Catastrophe Sandbox",
+                description="Simulate real-world developer missions in a safe DAG environment.",
+                target_paths=[],
+                objective="Explore the simulated commits and safely deploy to HEAD!",
+                completion_evidence="Reached HEAD commit.",
+                reward_xp=60,
+                reward_gold=30
+            ))
+        else: # Custom Builder / Sandbox
+            quests.append(Quest(
+                qid="custom_sandbox",
+                source="Scenario Builder",
+                title="Your Crafted Repository",
+                description="A custom dungeon designed entirely by your own specifications.",
+                target_paths=[],
+                objective="Venture through your custom DAG to deploy the HEAD branch!",
+                completion_evidence="Reached HEAD commit.",
+                reward_xp=100,
+                reward_gold=50
+            ))
+        return quests
 
     def _on_damage_applied(self, ev):
         self.chronicle.add_event(f"{ev.attacker_name} hit {ev.target_name} for {ev.damage} dmg. (Remaining: {ev.remaining_hp} HP)")
@@ -202,13 +305,28 @@ class TerminalInterface:
         sys.stdout.flush()
 
     def check_active_quest_validation(self):
-        """Re-scans real workspace using adapters to check active quest completion evidence."""
+        """Re-scans real workspace or verifies simulation objectives."""
         if not self.active_quest or self.active_quest.status == "Completed":
             return
 
-        completed = self.quest_compiler.verify_quest_completion(
-            self.active_quest, self.git_cli, self.diagnostics, self.test_runner
-        )
+        completed = False
+        if self.active_quest.id == "tutorial_stash":
+            completed = self.state.stash_snapshot is not None
+        elif self.active_quest.id == "tutorial_amend":
+            completed = self.engine.player.weapon and "Amended" in self.engine.player.weapon["name"]
+        elif self.active_quest.id == "tutorial_checkout":
+            completed = self.engine.player.role == "Frontend Dev"
+        elif self.active_quest.id == "tutorial_merge":
+            room = self.engine.get_current_room()
+            completed = not any(e.name in ["HEAD Pillar", "Incoming Pillar"] for e in room.enemies)
+        elif self.active_quest.id in ["scenario_mission", "custom_sandbox", "tutorial_general"]:
+            completed = self.won
+
+        if not completed and not self.active_quest.id.startswith("tutorial_") and self.active_quest.id not in ["scenario_mission", "custom_sandbox"]:
+            completed = self.quest_compiler.verify_quest_completion(
+                self.active_quest, self.git_cli, self.diagnostics, self.test_runner
+            )
+
         if completed:
             self.active_quest.status = "Completed"
             self.state.completed_quest_ids.add(self.active_quest.id)
@@ -235,6 +353,7 @@ class TerminalInterface:
             self.state.stash_snapshot = self.state.clone()
             self.add_log("Stashed current working directory state!")
             self.chronicle.add_event("Executed: git stash save")
+            self.check_active_quest_validation()
             return
 
         # Special Action: commit amend
@@ -255,6 +374,7 @@ class TerminalInterface:
             player.weapon = {"name": new_name, "bonus": new_val}
             player.last_chest_loot = {"name": new_name, "type": "weapon", "value": new_val, "gold": 10}
             self.add_log(f"Amended! Rerolled weapon into: {new_name} (+{new_val})!")
+            self.check_active_quest_validation()
             return
 
         # Special Action: checkout
@@ -264,6 +384,7 @@ class TerminalInterface:
             self.add_log(msg)
             if success:
                 self.chronicle.add_event(f"Checked out class to: {target}")
+            self.check_active_quest_validation()
             return
 
         # Decrement cooldowns
@@ -333,6 +454,7 @@ class TerminalInterface:
                 else:
                     self.add_log("Cherry Pick failed: No enemies.")
                     return
+            self.check_active_quest_validation()
             return
 
         if dx != 0 or dy != 0:
@@ -408,17 +530,53 @@ def run_terminal_game():
     print("  [1] Archive Expedition: Explore the historical timeline of your repository commits")
     print("  [2] Active Campaign: Accept structured quests compiled directly from active code signals (TODOs, changes)")
     print("  [3] Release Raid: Prepare the current working tree and HEAD for safe deployment")
+    print("  [4] Scenario Arena: Play pre-crafted Git narrative missions (Legacy Monolith, etc.)")
+    print("  [5] Git School: Play interactive, educational Git concept levels (Stash, Checkout)")
+    print("  [6] Scenario Builder: Build your own custom Git DAG dungeon using an interactive CLI!")
     print("-" * 60)
-    print("Select Campaign [1-3] or press Q to exit:")
+    print("Select Campaign [1-6] or press Q to exit:")
 
     choice = get_char_input()
     if choice.lower() == "q":
         return
 
-    if choice not in ["1", "2", "3"]:
+    if choice not in ["1", "2", "3", "4", "5", "6"]:
         choice = "1"
 
-    game = TerminalInterface(campaign_choice=choice)
+    custom_commits = None
+
+    if choice == "4":
+        clear_screen()
+        print("\033[1;35m=== Scenario Arena: Choose your Mission ===\033[0m")
+        print("-" * 60)
+        for k, v in SCENARIOS.items():
+            print(f"  [{k}] {v['name']}")
+        print("-" * 60)
+        print("Select Mission [1-4] or press Q to return:")
+        m_choice = get_char_input()
+        if m_choice.lower() == "q" or m_choice not in SCENARIOS:
+            return
+        custom_commits = load_scenario(m_choice)
+
+    elif choice == "5":
+        clear_screen()
+        print("\033[1;36m=== Git School: Interactive Tutorial Lessons ===\033[0m")
+        print("-" * 60)
+        for k, v in TUTORIALS.items():
+            print(f"  [{k}] {v['name']}")
+        print("-" * 60)
+        print("Select Lesson [1-4] or press Q to return:")
+        l_choice = get_char_input()
+        if l_choice.lower() == "q" or l_choice not in TUTORIALS:
+            return
+        custom_commits = load_tutorial(l_choice)
+
+    elif choice == "6":
+        custom_commits = run_interactive_builder()
+        if not custom_commits:
+            return
+
+    game = TerminalInterface(campaign_choice=choice, custom_commits=custom_commits)
 
     clear_screen()
     print("\033[1;32mEntering the cockpit timeline...\033[0m")
